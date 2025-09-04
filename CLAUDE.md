@@ -23,9 +23,21 @@ python3 dbt_dag_timeline_v2.py \
   -m manifest.json -r run_results.json -o out_4k \
   --layout layered \
   --mode cumulative \
-  --highlight-critical \
   --fps 60 --duration 12 \
-  --title "" \
+  --title "dbt DAG Timeline" \
+  --encode mp4
+```
+
+### dbt Fusion with Debug Log
+For dbt Fusion runs, include the debug.log for accurate skip detection:
+```bash
+python3 dbt_dag_timeline_v2.py \
+  -m fusion/manifest.json -r fusion/run_results.json -d fusion/debug.log \
+  -o out_fusion \
+  --layout layered \
+  --mode cumulative \
+  --fps 30 --duration 8 \
+  --title "dbt Fusion Timeline" \
   --encode mp4
 ```
 
@@ -36,6 +48,7 @@ The codebase follows a modular structure:
 
 ### Core Data Processing
 - `load_manifest_and_results()` - Parses dbt artifacts and builds NetworkX graph
+- `parse_fusion_debug_log()` - Extracts "Reused" models from debug.log for Fusion skip detection
 - `NodeInfo` dataclass - Represents individual dbt nodes with timing and metadata
 - Timing extraction from run_results.json with fallback to timing blocks
 
@@ -50,9 +63,11 @@ The codebase follows a modular structure:
 - Color coding by model owner (derived from file paths)
 - Progress bar and timestamp overlay
 - **Fusion-specific features:**
-  - Automatic detection of dbt Fusion vs Core from run_results.json
-  - Special cyan highlighting for models skipped by Fusion's intelligent skipping
-  - Version indicator and skip count display
+  - Automatic detection of dbt Fusion vs Core from run_results.json version strings
+  - Accurate skip detection via debug.log parsing (looks for "Reused" entries)
+  - Massive bright green nodes (500px) for intelligently skipped models
+  - Orange nodes (75px) for executed models with all-orange connection lines
+  - Skip count display with efficiency percentages
   - Visual differentiation between Core and Fusion runs
 
 ### Video Encoding
@@ -74,6 +89,20 @@ System dependencies:
 The script expects standard dbt artifacts:
 - `manifest.json` - dbt project metadata and dependency graph
 - `run_results.json` - Execution results with timing information
+- `debug.log` (optional) - For dbt Fusion runs, provides accurate skip detection via "Reused" log entries
+
+## Command Line Arguments
+
+Key arguments for the main script:
+- `-m, --manifest` - Path to manifest.json file (required)
+- `-r, --run-results` - Path to run_results.json file (required)
+- `-d, --debug-log` - Path to debug.log file (optional, for Fusion skip detection)
+- `-o, --outdir` - Output directory for frames and video (required)
+- `--layout` - Graph layout: layered (default), dot, sfdp, spring
+- `--mode` - Visualization mode: cumulative (default), pulse, all_vs_needed
+- `--fps` - Frame rate for video encoding (default: 60)
+- `--duration` - Total animation duration in seconds (default: 24.0)
+- `--encode` - Encode to video: mp4, mov (optional)
 
 ## Output Structure
 

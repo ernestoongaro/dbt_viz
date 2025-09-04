@@ -2,8 +2,9 @@
 manifest.json
 run_results.json
 
-# Generated output directories and files
-out_*/
+# Generated output files (but keep directory structure)
+out_*/*
+!out_*/.gitkeep
 *.mp4
 *.mov
 *.png
