@@ -8,6 +8,7 @@ import random
 import math
 import numpy as np
 from PIL import Image, ImageDraw
+import time
 
 from .parser import NodeInfo
 
@@ -239,24 +240,56 @@ def render_frames(
         ni = nodes[uid]
         return ni.completed_epoch or ni.started_epoch or 0
 
-    first_idx: Dict[str, int] = {}
-    # Executed nodes appear at their first tick >= node_time
-    for uid, ni in nodes.items():
-        if (ni.status or '').lower() == 'success':
-            t0 = node_time(uid)
-            fi = 0
-            for i, tt in enumerate(ticks):
-                if tt >= t0:
-                    fi = i
-                    break
-            first_idx[uid] = fi
+    # Build parents/children maps
+    parents: Dict[str, List[str]] = {u: [] for u in nodes}
+    children: Dict[str, List[str]] = {u: [] for u in nodes}
+    for u, v in edges:
+        if u in nodes and v in nodes:
+            parents[v].append(u)
+            children[u].append(v)
 
-    # Skipped nodes get a randomized early appearance within first 20% frames
-    rng = random.Random(seed)
-    early = max(0, int(total_frames * 0.2))
-    for uid, ni in nodes.items():
-        if (ni.status or '').lower() == 'fusion_skipped':
-            first_idx[uid] = rng.randint(0, early)
+    # Topological order (best-effort)
+    indeg = {u: len(parents[u]) for u in nodes}
+    queue = [u for u, d in indeg.items() if d == 0]
+    topo: List[str] = []
+    while queue:
+        u = queue.pop(0)
+        topo.append(u)
+        for w in children[u]:
+            indeg[w] -= 1
+            if indeg[w] == 0:
+                queue.append(w)
+    # fallback if cycle or missing: include any not in topo
+    if len(topo) != len(nodes):
+        seen = set(topo)
+        topo.extend([u for u in nodes.keys() if u not in seen])
+
+    # Compute appearance epoch: executed -> actual time; skipped -> when parents are ready
+    appear_epoch: Dict[str, int] = {}
+    for u in topo:
+        ni = nodes[u]
+        st = (ni.status or '').lower()
+        if st == 'success':
+            appear_epoch[u] = node_time(u)
+        elif st == 'fusion_skipped':
+            if parents[u]:
+                m = max(appear_epoch.get(p, node_time(p) or t_min) for p in parents[u])
+                appear_epoch[u] = m
+            else:
+                appear_epoch[u] = t_min
+        else:
+            appear_epoch[u] = node_time(u) or t_min
+
+    # Map appearance epoch to frame index
+    first_idx: Dict[str, int] = {}
+    for uid in nodes.keys():
+        t0 = appear_epoch.get(uid, t_min)
+        fi = 0
+        for i, tt in enumerate(ticks):
+            if tt >= t0:
+                fi = i
+                break
+        first_idx[uid] = fi
 
     # Rotation params per node (gentle oscillation)
     rot_rng = random.Random(seed ^ 0xA5A5)
@@ -271,6 +304,8 @@ def render_frames(
     rotated_cache: Dict[Tuple[str, int, int], Image.Image] = {}
 
     # Draw loop
+    start_time = time.time()
+    last_print = start_time
     for idx, t in enumerate(ticks):
         img = Image.new("RGBA", (width, height), style.bg_color)
         draw = ImageDraw.Draw(img, "RGBA")
@@ -278,6 +313,8 @@ def render_frames(
         # No DAG edges — purely decorative random layout
 
         # Draw nodes
+        draw_queue_exec: List[Tuple[Image.Image, int, int]] = []
+        draw_queue_skip: List[Tuple[Image.Image, int, int]] = []
         for uid, ni in nodes.items():
             x, y = pos.get(uid, (width // 2, height // 2))
             fusion_skipped = (ni.status or '').lower() == 'fusion_skipped'
@@ -325,7 +362,30 @@ def render_frames(
                 draw_img = icon_rot
 
             w, h = draw_img.size
-            img.alpha_composite(draw_img, (int(x - w / 2), int(y - h / 2)))
+            ox, oy = int(x - w / 2), int(y - h / 2)
+            if fusion_skipped:
+                draw_queue_skip.append((draw_img, ox, oy))
+            else:
+                draw_queue_exec.append((draw_img, ox, oy))
+
+        # Always draw executed first, then skipped on top
+        for dimg, ox, oy in draw_queue_exec:
+            img.alpha_composite(dimg, (ox, oy))
+        for dimg, ox, oy in draw_queue_skip:
+            img.alpha_composite(dimg, (ox, oy))
 
         frame_path = frames_dir / f"frame_{idx:05d}.png"
         img.save(frame_path, format="PNG")
+
+        # Periodic progress output (~every 5 seconds)
+        now = time.time()
+        if (now - last_print) >= 5 or idx == 0 or idx == (total_frames - 1):
+            pct = 100.0 * (idx + 1) / max(1, total_frames)
+            elapsed = now - start_time
+            fps_eff = (idx + 1) / elapsed if elapsed > 0 else 0.0
+            remaining = total_frames - (idx + 1)
+            eta = remaining / fps_eff if fps_eff > 0 else 0.0
+            print(f"Rendering frames: {idx + 1}/{total_frames} ({pct:.1f}%) — elapsed {elapsed:.1f}s, ETA {eta:.1f}s", flush=True)
+            last_print = now
+
+    print(f"Wrote {total_frames} frames to {frames_dir}")

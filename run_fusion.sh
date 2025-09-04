@@ -12,9 +12,9 @@ python3 -m dbt_viz.cli \
     --fps 30 --duration 12 \
     --width 3840 --height 2160 \
     --fade-frames 12 \
-    --icon-scale 2.2 \
-    --exec-diam-min 160 --exec-diam-max 640 \
-    --skip-diam-min 200 --skip-diam-max 720 \
+    --icon-scale 1.0 \
+    --exec-diam-min 72 --exec-diam-max 240 \
+    --skip-diam-min 96 --skip-diam-max 280 \
     --seed 42 \
     --encode
 
